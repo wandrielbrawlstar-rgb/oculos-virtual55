@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Óculos VR com mão</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<style>
+:root{color-scheme:dark;--bg:#05070d;--fg:#e8f1ff;--ac:#35d0ff}
+html,body{height:100%;margin:0;background:#000;color:var(--fg);font-family:system-ui,sans-serif;overflow:hidden;touch-action:none;user-select:none}
+#start{position:fixed;inset:0;z-index:9;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center;box-sizing:border-box}
+#start h1{margin:0;font-size:22px}
+#start p{margin:0;max-width:440px;opacity:.75;font-size:14px;line-height:1.4}
+#msg{color:#ffb4b4;font-size:13px;min-height:16px;max-width:440px}
+.gbtn{font:inherit;color:#05070d;background:var(--ac);border:0;border-radius:10px;padding:10px 16px;font-weight:600;cursor:pointer}
+.gbtn.alt{background:transparent;color:var(--fg);border:1px solid var(--ac)}
+#stage{position:fixed;inset:0;display:flex}
+.eye{flex:1;position:relative;overflow:hidden;background:#000}
+.eye+.eye{border-left:2px solid #000}
+.eye>video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.eye>canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4}
+/* ambiente virtual: some a câmera e mostra um cenário escuro com grade */
+.eye.virt>video{display:none}
+.eye.virt{background:radial-gradient(ellipse at 50% 40%,#0b1a33 0%,#03060d 70%);}
+.eye.virt::before{content:"";position:absolute;left:-50%;right:-50%;bottom:0;height:60%;background:repeating-linear-gradient(90deg,rgba(53,208,255,.18) 0 1px,transparent 1px 60px),repeating-linear-gradient(0deg,rgba(53,208,255,.18) 0 1px,transparent 1px 60px);transform:perspective(400px) rotateX(70deg);transform-origin:bottom;pointer-events:none}
+.cur{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid #fff;border-radius:50%;background:rgba(53,208,255,.4);pointer-events:none;display:none;z-index:5}
+.cur.p{background:#fff}
+.panel{position:absolute;width:calc(var(--u)*240);transform:translate(-50%,-50%);background:rgba(10,20,35,.78);border:1px solid rgba(53,208,255,.55);border-radius:calc(var(--u)*14);padding:calc(var(--u)*8);box-sizing:border-box;text-align:center;z-index:2;display:none;box-shadow:0 0 18px rgba(53,208,255,.15)}
+.panel.big{width:calc(var(--u)*320)}
+.panel.grab{border-color:#fff;box-shadow:0 0 16px var(--ac)}
+.panel .t{display:flex;justify-content:space-between;align-items:center;font-size:calc(var(--u)*10);opacity:.8;letter-spacing:.06em;text-transform:uppercase;margin-bottom:calc(var(--u)*4)}
+.panel .v{font-size:calc(var(--u)*28);font-weight:600}
+.panel .s{font-size:calc(var(--u)*11);opacity:.7}
+.panel iframe{width:100%;height:calc(var(--u)*170);border:0;border-radius:calc(var(--u)*8);background:#000;display:block}
+.panel.big iframe{height:calc(var(--u)*280)}
+.btns{display:flex;flex-wrap:wrap;gap:calc(var(--u)*4);justify-content:center;margin-top:calc(var(--u)*6)}
+.keys{display:grid;grid-template-columns:repeat(7,1fr);gap:calc(var(--u)*3);margin-top:calc(var(--u)*6)}
+.btn{font:inherit;font-size:calc(var(--u)*12);color:var(--fg);background:rgba(53,208,255,.18);border:1px solid rgba(53,208,255,.5);border-radius:calc(var(--u)*8);padding:calc(var(--u)*5) calc(var(--u)*8);cursor:pointer}
+.keys .btn{padding:calc(var(--u)*4) 0;font-size:calc(var(--u)*11)}
+.x{font:inherit;font-size:calc(var(--u)*12);color:var(--fg);background:none;border:0;cursor:pointer;padding:0 calc(var(--u)*4)}
+/* barra de apps fixa na parte de baixo da visão */
+.taskbar{position:absolute;left:50%;bottom:calc(var(--u)*12);transform:translateX(-50%);display:flex;gap:calc(var(--u)*6);padding:calc(var(--u)*6);background:rgba(8,14,26,.85);border:1px solid rgba(53,208,255,.4);border-radius:calc(var(--u)*16);z-index:3;box-shadow:0 0 20px rgba(0,0,0,.5)}
+.taskbar .btn{min-width:calc(var(--u)*56);padding:calc(var(--u)*8) calc(var(--u)*6);font-size:calc(var(--u)*11)}
+.taskbar .btn.on{background:var(--ac);color:#05070d}
+</style>
+</head>
+<body>
+<div id="start">
+  <h1>Óculos VR com mão</h1>
+  <p>Coloque o celular na caixa com a câmera de trás apontando para frente. Os painéis ficam presos no espaço: vire a cabeça para encontrá-los. Use a pinça (polegar + indicador) para apertar botões e arrastar painéis. Na barra de baixo, o botão "ambiente" troca a câmera por um cenário virtual. Sem a caixa, use o mouse para testar.</p>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+    <button class="gbtn" id="go2">Iniciar (2 olhos)</button>
+    <button class="gbtn alt" id="go1">Iniciar (tela única)</button>
+  </div>
+  <div id="msg"></div>
+</div>
+<div id="stage"></div>
+
+<script>
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+// Troque pelos IDs dos seus vídeos (o trecho depois de watch?v=)
+const YT = ['dQw4w9WgXcQ', 'jNQXAC9IVRw', 'M7lc1UVf-VE'];
+const LET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const pad = n => String(n).padStart(2, '0');
+const D = Math.PI / 180;
+const FOV_K = 0.87; // distância focal relativa à altura da tela (~60° na vertical)
+const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
+
+let panels = [], eyes = [], nextId = 1;
+let sw = {run: false, t0: 0, acc: 0};
+let hands = null, busy = false, pinched = false, grab = null, has = false, px = 0, py = 0;
+let video = null, lastLm = null, virtual = false;
+let ori = null;            // [alpha, beta, gamma] do giroscópio
+let yaw0 = 0, pitch0 = 0;  // direção "frente" definida ao recentralizar
+
+const swMs = () => sw.acc + (sw.run ? performance.now() - sw.t0 : 0);
+const clamp = v => Math.max(0.12, Math.min(0.88, v));
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const unit = v => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/n, v[1]/n, v[2]/n]; };
+const dirOf = (yaw, p) => [Math.sin(yaw)*Math.cos(p), Math.cos(yaw)*Math.cos(p), Math.sin(p)];
+const yawOf = v => Math.atan2(v[0], v[1]);
+const pitchOf = v => Math.asin(Math.max(-1, Math.min(1, v[2])));
+
+addEventListener('deviceorientation', e => { if (e.alpha != null) ori = [e.alpha, e.beta, e.gamma]; });
+
+// Base da câmera de trás no mundo: f = para onde aponta, r = direita da imagem, u = para cima da imagem
+function camBasis() {
+  if (!ori) return {f: [0, 1, 0], r: [1, 0, 0], u: [0, 0, 1]};
+  const [a, b, g] = ori.map(v => v * D);
+  const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+  const X = [ca*cg - sa*sb*sg, sa*cg + ca*sb*sg, -cb*sg];
+  const Y = [-sa*cb, ca*cb, sb];
+  const Z = [-(ca*sg + sa*sb*cg), -(sa*sg - ca*sb*cg), -(cb*cg)];
+  const ang = (((screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0) % 360 + 360) % 360;
+  const neg = v => [-v[0], -v[1], -v[2]];
+  const m = {0: [X, Y], 90: [neg(Y), X], 180: [neg(X), neg(Y)], 270: [Y, neg(X)]}[ang] || [X, Y];
+  return {f: Z.map(v => -v), r: neg(m[0]), u: m[1]};
+}
+function project(d, B, W, H) {
+  const a = dot(d, B.f);
+  if (a < 0.2) return null;
+  const F = H * FOV_K;
+  return {x: W/2 + F * dot(d, B.r) / a, y: H/2 - F * dot(d, B.u) / a};
+}
+function rayOf(X, Y, B, W, H) {
+  const F = H * FOV_K, sx = (X - W/2) / F, sy = (H/2 - Y) / F;
+  return unit([0,1,2].map(i => B.f[i] + sx*B.r[i] + sy*B.u[i]));
+}
+
+// ---------- conteúdo dos painéis ----------
+function tpl(p) {
+  switch (p.type) {
+    case 'clock': return '<div class="v" data-bind="clock"></div><div class="s" data-bind="date"></div>';
+    case 'sw': return '<div class="v" data-bind="sw"></div><div class="btns"><button class="btn" data-act="sw">iniciar / parar</button><button class="btn" data-act="swr">zerar</button></div>';
+    case 'yt': return `<iframe src="https://www.youtube-nocookie.com/embed/${YT[p.i]}" allow="autoplay; encrypted-media" allowfullscreen></iframe><div class="btns"><button class="btn" data-act="ytp">◀ anterior</button><button class="btn" data-act="ytn">próximo ▶</button></div>`;
+    case 'search': return `<div class="v">${p.q || '…'}</div><div class="keys">${LET.map(l => `<button class="btn" data-act="k" data-k="${l}">${l}</button>`).join('')}<button class="btn" data-act="k" data-k=" ">espaço</button><button class="btn" data-act="del">⌫</button><button class="btn" data-act="go">buscar</button></div>`;
+    case 'web': return `<iframe src="${p.url}"></iframe>`;
+  }
+}
+const TITLES = {clock: 'Relógio', sw: 'Cronômetro', yt: 'YouTube', search: 'Pesquisa'};
+const REL = {clock: [-18, 6], sw: [18, 6], yt: [-12, -10], search: [12, -10], web: [0, 0]};
+
+function appendPanel(p) {
+  eyes.forEach(e => {
+    const d = document.createElement('div');
+    d.className = 'panel' + (p.type === 'web' ? ' big' : '');
+    d.dataset.id = p.id;
+    d.innerHTML = `<div class="t"><span>${p.title}</span><button class="x" data-act="close">✕</button></div><div class="body">${tpl(p)}</div>`;
+    e.el.appendChild(d);
+  });
+}
+function renderPanel(p) {
+  eyes.forEach(e => { const b = e.el.querySelector(`.panel[data-id="${p.id}"] .body`); if (b) b.innerHTML = tpl(p); });
+}
+function addPanel(o, rel) {
+  o.id = nextId++;
+  const r = rel || REL[o.type] || [0, 0];
+  o.ry = r[0]*D; o.rp = r[1]*D;
+  panels.push(o); appendPanel(o);
+  return o;
+}
+function panelOfType(t) { return panels.find(p => p.type === t); }
+function closePanel(p) {
+  panels = panels.filter(q => q !== p);
+  eyes.forEach(e => e.el.querySelectorAll(`.panel[data-id="${p.id}"]`).forEach(n => n.remove()));
+  if (grab && grab.p === p) grab = null;
+}
+// abre o painel onde você está olhando; se já estiver aberto, fecha
+function togglePanel(type) {
+  const ex = panelOfType(type);
+  if (ex) { closePanel(ex); return; }
+  const B = camBasis();
+  addPanel({type, title: TITLES[type], i: 0, q: ''}, [0, 0]);
+  const p = panelOfType(type);
+  p.ry = wrap(yawOf(B.f) - yaw0); p.rp = pitchOf(B.f) - pitch0;
+  refreshTaskbar();
+}
+
+// ---------- barra de apps ----------
+function buildTaskbar() {
+  eyes.forEach(e => {
+    const t = document.createElement('div');
+    t.className = 'taskbar';
+    t.innerHTML = `
+      <button class="btn" data-act="tog" data-t="clock">⏰ relógio</button>
+      <button class="btn" data-act="tog" data-t="sw">⏱ tempo</button>
+      <button class="btn" data-act="tog" data-t="yt">▶ YouTube</button>
+      <button class="btn" data-act="tog" data-t="search">🔎 pesquisa</button>
+      <button class="btn" data-act="rc">⟲ centro</button>
+      <button class="btn" data-act="env">🌌 ambiente</button>`;
+    e.el.appendChild(t);
+  });
+  refreshTaskbar();
+}
+function refreshTaskbar() {
+  eyes.forEach(e => e.el.querySelectorAll('.taskbar [data-t]').forEach(b => {
+    b.classList.toggle('on', !!panelOfType(b.dataset.t));
+  }));
+  eyes.forEach(e => e.el.querySelectorAll('.taskbar [data-act="env"]').forEach(b => b.classList.toggle('on', virtual)));
+}
+function setVirtual(v) {
+  virtual = v;
+  eyes.forEach(e => e.el.classList.toggle('virt', v));
+  refreshTaskbar();
+}
+
+function buildEyes(n) {
+  $('#stage').innerHTML = ''; eyes = [];
+  for (let i = 0; i < n; i++) {
+    const el = document.createElement('div'); el.className = 'eye' + (virtual ? ' virt' : '');
+    el.innerHTML = '<video autoplay muted playsinline></video><canvas></canvas><div class="cur"></div>';
+    const vid = el.querySelector('video'); vid.srcObject = window.stream;
+    $('#stage').appendChild(el);
+    eyes.push({el, vid, cv: el.querySelector('canvas'), cx: null, cur: el.querySelector('.cur')});
+  }
+  panels.forEach(appendPanel);
+  buildTaskbar();
+}
+
+function recenter() {
+  const B = camBasis();
+  yaw0 = yawOf(B.f); pitch0 = pitchOf(B.f);
+}
+
+function updateBindings() {
+  const d = new Date();
+  const map = {
+    clock: pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()),
+    date: d.toLocaleDateString('pt-BR', {weekday: 'long', day: 'numeric', month: 'short'}),
+    sw: (() => { const t = swMs(); return pad(Math.floor(t/60000)) + ':' + pad(Math.floor(t/1000)%60) + '.' + pad(Math.floor(t/10)%100); })()
+  };
+  eyes.forEach(e => e.el.querySelectorAll('[data-bind]').forEach(n => { const v = map[n.dataset.bind]; if (v !== undefined && n.textContent !== v) n.textContent = v; }));
+}
+
+// posiciona painéis conforme a orientação e desenha o contorno da mão
+function layout() {
+  const B = camBasis();
+  eyes.forEach(e => {
+    const W = e.el.clientWidth, H = e.el.clientHeight;
+    e.el.style.setProperty('--u', H / 400);
+    panels.forEach(p => {
+      const d = e.el.querySelector(`.panel[data-id="${p.id}"]`);
+      if (!d) return;
+      const pr = project(dirOf(yaw0 + p.ry, pitch0 + p.rp), B, W, H);
+      const onScreen = pr && pr.x > -W*0.3 && pr.x < W*1.3 && pr.y > -H*0.3 && pr.y < H*1.3;
+      if (!onScreen) { d.style.display = 'none'; return; }
+      d.style.display = 'block';
+      d.style.left = pr.x + 'px'; d.style.top = pr.y + 'px';
+      d.classList.toggle('grab', !!grab && grab.p === p);
+    });
+    drawHand(e, W, H);
+  });
+}
+
+// mapeia um ponto da câmera (0..1) para a tela desta tela, considerando object-fit: cover
+function mapCam(x, y, W, H) {
+  const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+  const s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
+  return [(W - dw) / 2 + x * dw, (H - dh) / 2 + y * dh];
+}
+function drawHand(e, W, H) {
+  const cv = e.cv;
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, W, H);
+  if (!lastLm || virtual) return;
+  const pts = lastLm.map(p => mapCam(p.x, p.y, W, H));
+  c.lineCap = 'round';
+  HAND_LINKS.forEach(([a, b]) => {
+    c.beginPath(); c.moveTo(pts[a][0], pts[a][1]); c.lineTo(pts[b][0], pts[b][1]);
+    c.strokeStyle = 'rgba(53,208,255,.35)'; c.lineWidth = 8; c.stroke();
+    c.strokeStyle = '#7ff0ff'; c.lineWidth = 2; c.stroke();
+  });
+  [4, 8, 12, 16, 20].forEach(i => {
+    c.beginPath(); c.arc(pts[i][0], pts[i][1], 5, 0, Math.PI * 2);
+    c.fillStyle = 'rgba(127,240,255,.9)'; c.fill();
+  });
+}
+
+function setCursor(show, pressed) {
+  eyes.forEach(e => {
+    e.cur.style.display = show ? 'block' : 'none';
+    e.cur.style.left = px + 'px'; e.cur.style.top = py + 'px';
+    e.cur.classList.toggle('p', !!pressed);
+  });
+}
+
+function release() {
+  grab = null;
+  $$('.panel.grab').forEach(n => n.classList.remove('grab'));
+}
+
+function onHand(lm) {
+  lastLm = lm || null;
+  if (!lm) { has = false; pinched = false; setCursor(false); release(); return; }
+  const e0 = eyes[0].el, W = e0.clientWidth, H = e0.clientHeight;
+  const [tx, ty] = mapCam(lm[8].x, lm[8].y, W, H);
+  px = has ? px * 0.5 + tx * 0.5 : tx;
+  py = has ? py * 0.5 + ty * 0.5 : ty;
+  has = true;
+
+  const hs = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) || 1;
+  const pd = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / hs;
+  const isP = pinched ? pd < 0.5 : pd < 0.3;
+  setCursor(true, isP);
+
+  const B = camBasis();
+  const r = e0.getBoundingClientRect();
+  const el = document.elementFromPoint(r.left + px, r.top + py);
+
+  if (isP && !pinched && el) {
+    const btn = el.closest('[data-act]');
+    if (btn) {
+      btn.click();
+    } else {
+      const pn = el.closest('.panel');
+      const p = pn && panels.find(q => q.id === +pn.dataset.id);
+      if (p) {
+        const rv = rayOf(px, py, B, W, H);
+        grab = {p, oy: wrap((yaw0 + p.ry) - yawOf(rv)), op: (pitch0 + p.rp) - pitchOf(rv)};
+      }
+    }
+  }
+  if (!isP && pinched) release();
+  if (isP && grab) {
+    const rv = rayOf(px, py, B, W, H);
+    grab.p.ry = wrap(yawOf(rv) + grab.oy - yaw0);
+    grab.p.rp = Math.max(-75*D, Math.min(75*D, pitchOf(rv) + grab.op - pitch0));
+  }
+  pinched = isP;
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-act]');
+  if (!b) return;
+  const pn = b.closest('.panel');
+  const p = pn && panels.find(q => q.id === +pn.dataset.id);
+  const a = b.dataset.act;
+  if (a === 'close' && p) { closePanel(p); refreshTaskbar(); return; }
+  if (a === 'tog') { togglePanel(b.dataset.t); return; }
+  if (a === 'env') { setVirtual(!virtual); return; }
+  if (a === 'sw') { if (sw.run) { sw.acc = swMs(); sw.run = false; } else { sw.t0 = performance.now(); sw.run = true; } }
+  else if (a === 'swr') { sw = {run: false, t0: 0, acc: 0}; }
+  else if (a === 'rc') { recenter(); }
+  else if (a === 'ytn' && p) { p.i = (p.i + 1) % YT.length; renderPanel(p); }
+  else if (a === 'ytp' && p) { p.i = (p.i - 1 + YT.length) % YT.length; renderPanel(p); }
+  else if (a === 'k' && p) { p.q = (p.q || '') + b.dataset.k; renderPanel(p); }
+  else if (a === 'del' && p) { p.q = (p.q || '').slice(0, -1); renderPanel(p); }
+  else if (a === 'go' && p && p.q) {
+    const B = camBasis();
+    const url = 'https://pt.wikipedia.org/wiki/Especial:Pesquisar?search=' + encodeURIComponent(p.q);
+    const np = addPanel({type: 'web', title: p.q, url}, [0, 0]);
+    np.ry = wrap(yawOf(B.f) - yaw0); np.rp = pitchOf(B.f) - pitch0;
+  }
+});
+
+function loadHands() {
+  if (typeof Hands === 'undefined') { $('#msg').textContent = 'Não consegui carregar o detector de mãos (sem internet?). Os painéis continuam funcionando com o mouse.'; return; }
+  hands = new Hands({locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f});
+  hands.setOptions({maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5});
+  hands.onResults(res => onHand(res.multiHandLandmarks && res.multiHandLandmarks[0]));
+}
+
+async function tick() {
+  if (hands && video && video.readyState >= 2 && !busy) {
+    busy = true;
+    try { await hands.send({image: video}); } catch (e) {}
+    busy = false;
+  }
+  updateBindings();
+  layout();
+  requestAnimationFrame(tick);
+}
+
+async function start(n) {
+  try { if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); } catch (e) {}
+  try {
+    window.stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}, height: {ideal: 720}}, audio: false});
+  } catch (e) {
+    $('#msg').textContent = 'Não consegui abrir a câmera. Permita o acesso à câmera e tente de novo.';
+    return;
+  }
+  panels = [];
+  addPanel({type: 'clock', title: 'Relógio'});
+  addPanel({type: 'sw', title: 'Cronômetro'});
+  addPanel({type: 'yt', title: 'YouTube', i: 0});
+  addPanel({type: 'search', title: 'Pesquisa', q: ''});
+  buildEyes(n);
+  video = eyes[0].vid;
+  $('#start').style.display = 'none';
+  loadHands();
+  try { await document.documentElement.requestFullscreen(); } catch (e) {}
+  try { await screen.orientation.lock('landscape'); } catch (e) {}
+  setTimeout(recenter, 800);
+  requestAnimationFrame(tick);
+}
+$('#go2').onclick = () => start(2);
+$('#go1').onclick = () => start(1);
+</script>
+</body>
+</html>
